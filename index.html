@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DooM Audio</title>
+<style>
+  :root {
+    --crimson: #8b0000;
+    --gold: #b8860b;
+    --parchment: #e8dcc0;
+    --ink: #1a0f0f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Georgia', 'Times New Roman', serif;
+    background: linear-gradient(180deg, #1a0f0f 0%, #241414 100%);
+    color: var(--parchment);
+    padding: 14px;
+  }
+  h1 {
+    font-size: 15px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--gold);
+    border-bottom: 1px solid var(--crimson);
+    padding-bottom: 8px;
+    margin: 0 0 10px 0;
+  }
+  #status {
+    font-size: 12px;
+    color: #b8a888;
+    margin-bottom: 10px;
+    min-height: 16px;
+  }
+  #status .live { color: var(--gold); }
+  #tracks { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .track-btn {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(139, 0, 0, 0.15);
+    border: 1px solid var(--crimson);
+    color: var(--parchment);
+    padding: 8px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: left;
+  }
+  .track-btn:hover { background: rgba(139, 0, 0, 0.35); }
+  .track-btn.active { border-color: var(--gold); background: rgba(184, 134, 11, 0.2); }
+  .track-btn .mark { color: var(--gold); font-size: 11px; }
+  #stop-btn {
+    width: 100%;
+    background: transparent;
+    border: 1px solid #555;
+    color: #ccc;
+    padding: 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    margin-bottom: 14px;
+  }
+  #stop-btn:hover { border-color: var(--parchment); color: var(--parchment); }
+  .volume-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-top: 1px solid #3a2a2a;
+    padding-top: 12px;
+  }
+  .volume-row label { font-size: 12px; color: var(--gold); white-space: nowrap; }
+  input[type="range"] { flex: 1; accent-color: var(--crimson); }
+  #error { color: #d97070; font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h1>DooM Audio</h1>
+  <div id="status">Loading tracks…</div>
+  <div id="tracks"></div>
+  <button id="stop-btn" style="display:none;">Stop</button>
+  <div class="volume-row">
+    <label for="volume">Volume</label>
+    <input type="range" id="volume" min="0" max="100" value="70" />
+  </div>
+  <div id="error"></div>
+
+<script type="module">
+  import OBR from "https://esm.sh/@owlbear-rodeo/sdk@3.1.0";
+
+  const CHANNEL = "com.ftplimits.doomaudio/play";
+  const TRACKS_JSON_URL = new URL("tracks.json", window.location.href).href;
+  const FADE_MS = 5000;
+  const FADE_STEP_MS = 50;
+  const VOLUME_KEY = "doomaudio-volume";
+
+  const statusEl = document.getElementById("status");
+  const tracksEl = document.getElementById("tracks");
+  const stopBtn = document.getElementById("stop-btn");
+  const volumeSlider = document.getElementById("volume");
+  const errorEl = document.getElementById("error");
+
+  const audio = new Audio();
+  audio.loop = true;
+  audio.crossOrigin = "anonymous";
+
+  let masterVolume = Number(localStorage.getItem(VOLUME_KEY));
+  if (isNaN(masterVolume)) masterVolume = 0.7;
+  volumeSlider.value = String(Math.round(masterVolume * 100));
+
+  let fadeMultiplier = 0;
+  let fadeTimer = null;
+  let currentTrackName = null;
+  let isGM = false;
+
+  function applyVolume() {
+    audio.volume = Math.max(0, Math.min(1, masterVolume * fadeMultiplier));
+  }
+
+  function clearFade() {
+    if (fadeTimer) {
+      clearInterval(fadeTimer);
+      fadeTimer = null;
+    }
+  }
+
+  function fadeTo(target, onComplete) {
+    clearFade();
+    const start = fadeMultiplier;
+    const steps = FADE_MS / FADE_STEP_MS;
+    let step = 0;
+    fadeTimer = setInterval(() => {
+      step++;
+      const t = Math.min(1, step / steps);
+      fadeMultiplier = start + (target - start) * t;
+      applyVolume();
+      if (t >= 1) {
+        clearFade();
+        if (onComplete) onComplete();
+      }
+    }, FADE_STEP_MS);
+  }
+
+  function setStatus(text, live) {
+    statusEl.innerHTML = live ? `<span class="live">${text}</span>` : text;
+  }
+
+  function playTrack(track) {
+    const finishSwitch = () => {
+      audio.src = track.url;
+      audio.currentTime = 0;
+      audio.play().catch((err) => {
+        errorEl.textContent = "Playback blocked — click anywhere in the popover, then retry.";
+      });
+      fadeTo(1);
+      currentTrackName = track.name;
+      setStatus(`Now playing: ${track.name}`, true);
+      stopBtn.style.display = "block";
+      highlightActive(track.name);
+    };
+    if (!audio.paused && audio.src) {
+      fadeTo(0, finishSwitch);
+    } else {
+      finishSwitch();
+    }
+  }
+
+  function stopPlayback() {
+    fadeTo(0, () => {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    });
+    currentTrackName = null;
+    setStatus("No track playing.", false);
+    stopBtn.style.display = "none";
+    highlightActive(null);
+  }
+
+  function highlightActive(name) {
+    [...tracksEl.children].forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.name === name);
+    });
+  }
+
+  function renderTracks(tracks, gm) {
+    tracksEl.innerHTML = "";
+    tracks.forEach((track) => {
+      const btn = document.createElement("button");
+      btn.className = "track-btn";
+      btn.dataset.name = track.name;
+      btn.innerHTML = `<span>${track.name}</span><span class="mark">▶</span>`;
+      if (gm) {
+        btn.addEventListener("click", () => {
+          OBR.broadcast.sendMessage(CHANNEL, { type: "play", name: track.name, url: track.url }, { destination: "ALL" });
+        });
+      } else {
+        btn.disabled = true;
+        btn.style.cursor = "default";
+      }
+      tracksEl.appendChild(btn);
+    });
+    if (gm) {
+      stopBtn.addEventListener("click", () => {
+        OBR.broadcast.sendMessage(CHANNEL, { type: "stop" }, { destination: "ALL" });
+      });
+    } else {
+      stopBtn.remove();
+    }
+  }
+
+  volumeSlider.addEventListener("input", () => {
+    masterVolume = Number(volumeSlider.value) / 100;
+    localStorage.setItem(VOLUME_KEY, String(masterVolume));
+    applyVolume();
+  });
+
+  async function init() {
+    isGM = (await OBR.player.getRole()) === "GM";
+
+    let tracks = [];
+    try {
+      const res = await fetch(TRACKS_JSON_URL, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      tracks = await res.json();
+    } catch (err) {
+      errorEl.textContent = `Couldn't load tracks.json: ${err.message}`;
+    }
+
+    renderTracks(tracks, isGM);
+    setStatus(isGM ? "Select a track to play for the room." : "Waiting for the GM to start music.", false);
+
+    OBR.broadcast.onMessage(CHANNEL, (event) => {
+      const data = event.data;
+      if (data.type === "play") {
+        playTrack({ name: data.name, url: data.url });
+      } else if (data.type === "stop") {
+        stopPlayback();
+      }
+    });
+  }
+
+  OBR.onReady(() => {
+    init();
+  });
+</script>
+</body>
+</html>
