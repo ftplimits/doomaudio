@@ -1,0 +1,15 @@
+{
+  "name": "DooM Audio",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "author": "ftplimits",
+  "description": "Single-track ambiance player for the GM, synced to the whole room with 5s crossfades.",
+  "icon": "icon.svg",
+  "action": {
+    "title": "DooM Audio",
+    "icon": "icon.svg",
+    "popover": "index.html",
+    "height": 480,
+    "width": 320
+  }
+}
